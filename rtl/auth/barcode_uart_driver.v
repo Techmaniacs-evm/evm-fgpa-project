@@ -1,6 +1,4 @@
 
-`timescale 1ns / 1ps
-
 /*
 ASSUMPTIONS AND INTEGRATION NOTES
 
