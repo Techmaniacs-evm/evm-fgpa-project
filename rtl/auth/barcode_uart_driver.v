@@ -1,4 +1,24 @@
+
+`timescale 1ns / 1ps
+
+/*
+ASSUMPTIONS AND INTEGRATION NOTES
+
+1. rst is active-high and resets the receiver and UID assembler.
+2. UART uses 9600 baud, 8 data bits, no parity and 1 stop bit.
+3. The system clock is assumed to be 50 MHz.
+4. rx is the UART input from the barcode scanner.
+5. A scan contains exactly 8 ASCII characters.
+6. The roll number format is 2 uppercase letters, 2 digits,
+   1 uppercase letter and 3 digits.
+7. The scanner sends the characters in order, least significant
+   UART data bit first, followed by a stop bit.
+8. uid_valid is a one-clock-cycle pulse for a correctly formatted UID.
+9. tx_enb is generated but is unused because this module only receives data.
+*/
+
 module baudrate_generator(input clk, output rx_enb, output tx_enb);
+
 reg [12:0] rx_cnt = 13'd0;
 reg [12:0] tx_cnt = 13'd0;
 
@@ -21,13 +41,14 @@ assign tx_enb = (tx_cnt == 13'd0);
 
 endmodule
 
+
 module reciever(input clk, input rx_enb, input rx, input rx_rst,
                 output reg [7:0] data_out, output reg data_valid);
 
-localparam [1:0] IDLE_STATE    = 2'b00;
-localparam [1:0] START_STATE   = 2'b01;
-localparam [1:0] DATAOUT_STATE = 2'b10;
-localparam [1:0] STOP_STATE    = 2'b11;
+localparam IDLE_STATE    = 2'b00;
+localparam START_STATE   = 2'b01;
+localparam DATAOUT_STATE = 2'b10;
+localparam STOP_STATE    = 2'b11;
 
 reg [1:0] state;
 reg [3:0] index;
@@ -44,6 +65,8 @@ always @(posedge clk) begin
     end
     else if (rx_enb) begin
         case (state)
+
+            // Wait for the UART start bit
             IDLE_STATE: begin
                 if (rx == 1'b0) begin
                     sample <= 4'h0;
@@ -51,6 +74,7 @@ always @(posedge clk) begin
                 end
             end
 
+            // Check the start bit near its middle
             START_STATE: begin
                 if (sample == 4'h7) begin
                     if (rx == 1'b1) begin
@@ -67,6 +91,7 @@ always @(posedge clk) begin
                     sample <= sample + 4'h1;
             end
 
+            // Receive the 8 data bits
             DATAOUT_STATE: begin
                 if (sample == 4'h7)
                     data_out[index] <= rx;
@@ -83,6 +108,7 @@ always @(posedge clk) begin
                     sample <= sample + 4'h1;
             end
 
+            // Check the stop bit and indicate received data
             STOP_STATE: begin
                 if (sample == 4'h7) begin
                     data_valid <= (rx == 1'b1);
@@ -94,11 +120,13 @@ always @(posedge clk) begin
             end
 
             default: state <= IDLE_STATE;
+
         endcase
     end
 end
 
 endmodule
+
 
 module uid_assembler(input clk, input rst, input [7:0] data, input data_valid,
                      output reg [63:0] uid, output reg uid_check);
@@ -113,15 +141,20 @@ always @(posedge clk) begin
         uid <= 64'd0;
     end
     else if (data_valid) begin
+        // Store each received character in the UID register
         uid[8*i +: 8] <= data;
         i <= i + 3'h1;
 
-        if (i == 3'h7)
+        // Indicate that all 8 characters have arrived
+        if (i == 3'h7) begin
             uid_check <= 1'b1;
+            i <= 3'h0;
+        end
     end
 end
 
 endmodule
+
 
 module uid_validator(input clk, input rst, input [63:0] uid, input uid_check,
                      output reg uid_valid);
@@ -139,11 +172,13 @@ wire format_ok =
 always @(posedge clk) begin
     uid_valid <= 1'b0;
 
+    // Accept only a complete, correctly formatted UID
     if (!rst && uid_check && format_ok)
         uid_valid <= 1'b1;
 end
 
 endmodule
+
 
 module barcode_uart_driver(input clk, input rst, input rx,
                            output [63:0] uid, output uid_valid);
@@ -154,8 +189,9 @@ wire data_valid;
 wire uid_check;
 
 baudrate_generator u_baud(clk, rx_enb, tx_enb);
-reciever           u_rx  (clk, rx_enb, rx, rst, data, data_valid);
-uid_assembler      u_asm (clk, rst, data, data_valid, uid, uid_check);
-uid_validator      u_val (clk, rst, uid, uid_check, uid_valid);
+reciever           u_rx(clk, rx_enb, rx, rst, data, data_valid);
+uid_assembler      u_asm(clk, rst, data, data_valid, uid, uid_check);
+uid_validator      u_val(clk, rst, uid, uid_check, uid_valid);
 
 endmodule
+
